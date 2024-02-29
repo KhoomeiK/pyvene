@@ -66,6 +66,7 @@ class BlipITMWrapper(nn.Module):
                 attention_mask=attention_mask,
                 encoder_hidden_states=image_embeds,
                 encoder_attention_mask=image_attention_mask,
+                return_dict=return_dict,
                 output_hidden_states=True,
             )
             caption_embeds = (
