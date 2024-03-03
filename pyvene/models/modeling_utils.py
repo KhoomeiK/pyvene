@@ -102,7 +102,9 @@ def get_dimension_by_component(model_type, model_config, component) -> int:
 
     dimension_proposals = type_to_dimension_mapping[model_type][component]
     for proposal in dimension_proposals:
-        if "*" in proposal:
+        if proposal.isnumeric():
+            dimension = int(proposal)
+        elif "*" in proposal:
             # often constant multiplier with MLP
             dimension = getattr_for_torch_module(
                 model_config, proposal.split("*")[0]
@@ -225,7 +227,8 @@ def output_to_subcomponent(output, component, model_type, model_config):
     :param model_config: Hugging Face Model Config
     """
     subcomponent = output
-    if component in type_to_module_mapping[model_type]:
+    if model_type in type_to_module_mapping and \
+        component in type_to_module_mapping[model_type]:
         split_last_dim_by = type_to_module_mapping[model_type][component][2:]
         if len(split_last_dim_by) != 0 and len(split_last_dim_by) > 2:
             raise ValueError(f"Unsupported {split_last_dim_by}.")
@@ -421,8 +424,11 @@ def do_intervention(
     """Do the actual intervention."""
 
     if isinstance(intervention, types.FunctionType):
-        return intervention(base_representation, source_representation)
-    
+        if subspaces is None:
+            return intervention(base_representation, source_representation)
+        else:
+            return intervention(base_representation, source_representation, subspaces)
+
     num_unit = base_representation.shape[1]
 
     # flatten

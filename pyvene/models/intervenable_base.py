@@ -300,6 +300,16 @@ class IntervenableModel(nn.Module):
             if isinstance(v[0], TrainableIntervention):
                 ret_params += [p for p in v[0].parameters()]
         return ret_params
+    
+    def named_parameters(self, recurse=True):
+        """
+        The above, but for HuggingFace.
+        """
+        ret_params = []
+        for k, v in self.interventions.items():
+            if isinstance(v[0], TrainableIntervention):
+                ret_params += [(k + '.' + n, p) for n, p in v[0].named_parameters()]
+        return ret_params
 
     def get_cached_activations(self):
         """
@@ -652,11 +662,13 @@ class IntervenableModel(nn.Module):
 
             def hook_callback(model, args, kwargs, output=None):
                 if self._is_generation:
-                    is_prompt = self._key_getter_call_counter[key] == 0
-                    if not self._intervene_on_prompt or is_prompt:
-                        self._key_getter_call_counter[key] += 1
-                    if self._intervene_on_prompt ^ is_prompt:
-                        return  # no-op
+                    pass
+                    # for getter, there is no restriction.
+                    # is_prompt = self._key_getter_call_counter[key] == 0
+                    # if not self._intervene_on_prompt or is_prompt:
+                    #     self._key_getter_call_counter[key] += 1
+                    # if self._intervene_on_prompt ^ is_prompt:
+                    #     return  # no-op
                 if output is None:
                     if len(args) == 0:  # kwargs based calls
                         # PR: https://github.com/frankaging/align-transformers/issues/11
@@ -1215,7 +1227,7 @@ class IntervenableModel(nn.Module):
         """Broadcast simple inputs to a dict"""
         _sources = sources
         if len(sources) == 1 and len(self._intervention_group) > 1:
-            for _ in range(len(self._intervention_group)):
+            for _ in range(len(self._intervention_group)-1):
                 _sources += [sources[0]]
         else:
             _sources = sources
@@ -1245,7 +1257,7 @@ class IntervenableModel(nn.Module):
         unit_locations: Optional[Dict] = None,
         source_representations: Optional[Dict] = None,
         subspaces: Optional[List] = None,
-        output_original_output: Optional[bool] = None,
+        output_original_output: Optional[bool] = False,
         return_dict: Optional[bool] = None,
     ):
         """
@@ -1324,7 +1336,6 @@ class IntervenableModel(nn.Module):
         if sources is None and activations_sources is None \
             and unit_locations is None and len(self.interventions) == 0:
             return self.model(**base), None
-        
         # broadcast
         unit_locations = self._broadcast_unit_locations(get_batch_size(base), unit_locations)
         sources = [None]*len(self._intervention_group) if sources is None else sources
@@ -1339,9 +1350,10 @@ class IntervenableModel(nn.Module):
             activations_sources,
             subspaces,
         )
-
-        # returning un-intervened output without gradients
-        with torch.inference_mode():
+        
+        base_outputs = None
+        if output_original_output:
+            # returning un-intervened output with gradients
             base_outputs = self.model(**base)
 
         try:
@@ -1416,6 +1428,7 @@ class IntervenableModel(nn.Module):
         source_representations: Optional[Dict] = None,
         intervene_on_prompt: bool = False,
         subspaces: Optional[List] = None,
+        output_original_output: Optional[bool] = False,
         **kwargs,
     ):
         """
@@ -1471,9 +1484,10 @@ class IntervenableModel(nn.Module):
             activations_sources,
             subspaces,
         )
-
-        # returning un-intervened output without gradients
-        with torch.inference_mode():
+        
+        base_outputs = None
+        if output_original_output:
+            # returning un-intervened output
             base_outputs = self.model.generate(inputs=base["input_ids"], **kwargs)
 
         set_handlers_to_remove = None
@@ -1511,7 +1525,6 @@ class IntervenableModel(nn.Module):
                         CollectIntervention
                     ):
                         collected_activations += self.activations[key]
-            
         except Exception as e:
             raise e
         finally:
@@ -1637,8 +1650,14 @@ class IntervenableModel(nn.Module):
                 )
 
         return batched_location_dict
+    
+    def train(self):
+        self.model.train()
+    
+    def eval(self):
+        self.model.eval()
 
-    def train(
+    def train_alignment(
         self,
         train_dataloader,
         compute_loss,
@@ -1729,7 +1748,7 @@ class IntervenableModel(nn.Module):
                         self.set_temperature(temperature_schedule[total_step])
                 total_step += 1
 
-    def evaluate(
+    def eval_alignment(
         self,
         eval_dataloader,
         compute_metrics,
